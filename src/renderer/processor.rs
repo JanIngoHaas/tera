@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{Write, Read};
 
 use serde_json::{to_string_pretty, to_value, Number, Value};
 
@@ -16,9 +15,6 @@ use crate::template::Template;
 use crate::tera::Tera;
 use crate::utils::render_to_string;
 use crate::Context;
-
-use super::ReadWrite;
-
 
 /// Special string indicating request to dump context
 static MAGICAL_DUMP_VAR: &str = "__tera_context";

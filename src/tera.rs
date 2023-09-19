@@ -12,7 +12,7 @@ use crate::builtins::functions::{self, Function};
 use crate::builtins::testers::{self, Test};
 use crate::context::Context;
 use crate::errors::{Error, Result};
-use crate::renderer::{Renderer, ReadWrite};
+use crate::renderer::Renderer;
 use crate::template::Template;
 use crate::utils::escape_html;
 

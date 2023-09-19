@@ -41,15 +41,9 @@ where
     F: FnOnce(&mut String) -> Result<(), E>,
     Error: From<E>,
 {
+    let _ = context;
     let mut buffer = String::new();
     render(&mut buffer).map_err(Error::from)?;
-    Ok(buffer)
-}
-
-pub(crate) fn buffer_to_string<F>(context: F, buffer: String) -> Result<String, Error>
-where
-    F: FnOnce() -> String,
-{
     Ok(buffer)
 }
 
@@ -80,7 +74,6 @@ mod tests {
 
     #[test]
     fn test_render_to_string() {
-        use std::io::Write;
         let string = render_to_string(|| panic!(), |w| {w.push_str("test"); Ok::<(),Error>(())}).unwrap();
         assert_eq!(string, "test".to_owned());
     }
