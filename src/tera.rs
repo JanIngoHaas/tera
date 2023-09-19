@@ -12,7 +12,7 @@ use crate::builtins::functions::{self, Function};
 use crate::builtins::testers::{self, Test};
 use crate::context::Context;
 use crate::errors::{Error, Result};
-use crate::renderer::Renderer;
+use crate::renderer::{Renderer, ReadWrite};
 use crate::template::Template;
 use crate::utils::escape_html;
 
@@ -410,17 +410,17 @@ impl Tera {
     /// tera.add_raw_template("index.html", "<p>{{ name }}</p>");
     ///
     /// // Rendering a template to an internal buffer
-    /// let mut buffer = Vec::new();
+    /// let mut buffer = String::new();
     /// let mut context = Context::new();
     /// context.insert("name", "John Wick");
     /// tera.render_to("index.html", &context, &mut buffer).unwrap();
-    /// assert_eq!(buffer, b"<p>John Wick</p>");
+    /// assert_eq!(buffer, "<p>John Wick</p>");
     /// ```
     pub fn render_to(
         &self,
         template_name: &str,
         context: &Context,
-        write: impl Write,
+        write: &mut String,
     ) -> Result<()> {
         let template = self.get_template(template_name)?;
         let renderer = Renderer::new(template, self, context);

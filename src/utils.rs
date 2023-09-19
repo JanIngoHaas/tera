@@ -38,23 +38,25 @@ pub fn escape_html(input: &str) -> String {
 pub(crate) fn render_to_string<C, F, E>(context: C, render: F) -> Result<String, Error>
 where
     C: FnOnce() -> String,
-    F: FnOnce(&mut Vec<u8>) -> Result<(), E>,
+    F: FnOnce(&mut String) -> Result<(), E>,
     Error: From<E>,
 {
-    let mut buffer = Vec::new();
+    let mut buffer = String::new();
     render(&mut buffer).map_err(Error::from)?;
-    buffer_to_string(context, buffer)
+    Ok(buffer)
 }
 
-pub(crate) fn buffer_to_string<F>(context: F, buffer: Vec<u8>) -> Result<String, Error>
+pub(crate) fn buffer_to_string<F>(context: F, buffer: String) -> Result<String, Error>
 where
     F: FnOnce() -> String,
 {
-    String::from_utf8(buffer).map_err(|error| Error::utf8_conversion_error(error, context()))
+    Ok(buffer)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::Error;
+
     use super::escape_html;
     use super::render_to_string;
 
@@ -79,7 +81,7 @@ mod tests {
     #[test]
     fn test_render_to_string() {
         use std::io::Write;
-        let string = render_to_string(|| panic!(), |w| write!(w, "test")).unwrap();
+        let string = render_to_string(|| panic!(), |w| {w.push_str("test"); Ok::<(),Error>(())}).unwrap();
         assert_eq!(string, "test".to_owned());
     }
 }

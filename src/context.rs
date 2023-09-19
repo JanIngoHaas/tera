@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::write};
 use std::io::Write;
 
 use serde::ser::Serialize;
@@ -136,42 +136,44 @@ impl Default for Context {
 }
 
 pub trait ValueRender {
-    fn render(&self, write: &mut impl Write) -> std::io::Result<()>;
+    fn render(&self, write: &mut String) -> std::io::Result<()>;
 }
 
 // Convert serde Value to String.
 impl ValueRender for Value {
-    fn render(&self, write: &mut impl Write) -> std::io::Result<()> {
+    fn render(&self, write: &mut String) -> std::io::Result<()> {
         match *self {
-            Value::String(ref s) => write!(write, "{}", s),
+            Value::String(ref s) => write.push_str(&s),
             Value::Number(ref i) => {
                 if let Some(v) = i.as_i64() {
-                    write!(write, "{}", v)
+                    write.push_str(&v.to_string())
                 } else if let Some(v) = i.as_u64() {
-                    write!(write, "{}", v)
+                    write.push_str(&v.to_string())
                 } else if let Some(v) = i.as_f64() {
-                    write!(write, "{}", v)
+                    write.push_str(&v.to_string())
                 } else {
                     unreachable!()
                 }
             }
-            Value::Bool(i) => write!(write, "{}", i),
-            Value::Null => Ok(()),
+            Value::Bool(i) => write.push_str(&i.to_string()),
+            Value::Null => (),
             Value::Array(ref a) => {
                 let mut first = true;
-                write!(write, "[")?;
+                write.push('[');
                 for i in a.iter() {
                     if !first {
-                        write!(write, ", ")?;
+                        write.push(',');
+                        write.push(' ');
                     }
                     first = false;
                     i.render(write)?;
                 }
-                write!(write, "]")?;
-                Ok(())
+                write.push(']');
+                ()
             }
-            Value::Object(_) => write!(write, "[object]"),
-        }
+            Value::Object(_) => write.push_str("[object]"),
+        };
+        Ok(())
     }
 }
 

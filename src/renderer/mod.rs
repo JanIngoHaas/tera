@@ -8,7 +8,8 @@ mod macros;
 mod processor;
 mod stack_frame;
 
-use std::io::Write;
+use std::io::{Write, Read};
+pub trait ReadWrite : Write + Read{}
 
 use self::processor::Processor;
 use crate::errors::Result;
@@ -47,13 +48,13 @@ impl<'a> Renderer<'a> {
 
     /// Combines the context with the Template to generate the end result
     pub fn render(&self) -> Result<String> {
-        let mut output = Vec::with_capacity(2000);
+        let mut output = String::new();
         self.render_to(&mut output)?;
-        buffer_to_string(|| "converting rendered buffer to string".to_string(), output)
+        Ok(output)
     }
 
     /// Combines the context with the Template to write the end result to output
-    pub fn render_to(&self, mut output: impl Write) -> Result<()> {
+    pub fn render_to(&self, mut output: &mut String) -> Result<()> {
         let mut processor =
             Processor::new(self.template, self.tera, self.context, self.should_escape);
 

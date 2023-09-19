@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Write, Read};
 
 use serde_json::{to_string_pretty, to_value, Number, Value};
 
@@ -17,8 +17,12 @@ use crate::tera::Tera;
 use crate::utils::render_to_string;
 use crate::Context;
 
+use super::ReadWrite;
+
+
 /// Special string indicating request to dump context
 static MAGICAL_DUMP_VAR: &str = "__tera_context";
+static MAGICAL_CONTENT_VAR: &str = "_content_";
 
 /// This will convert a Tera variable to a json pointer if it is possible by replacing
 /// the index with their evaluated stringified value
@@ -147,7 +151,7 @@ impl<'a> Processor<'a> {
         }
     }
 
-    fn render_body(&mut self, body: &'a [Node], write: &mut impl Write) -> Result<()> {
+    fn render_body(&mut self, body: &'a [Node], write: &mut String) -> Result<()> {
         for n in body {
             self.render_node(n, write)?;
 
@@ -159,7 +163,7 @@ impl<'a> Processor<'a> {
         Ok(())
     }
 
-    fn render_for_loop(&mut self, for_loop: &'a Forloop, write: &mut impl Write) -> Result<()> {
+    fn render_for_loop(&mut self, for_loop: &'a Forloop, write: &mut String) -> Result<()> {
         let container_name = match for_loop.container.val {
             ExprVal::Ident(ref ident) => ident,
             ExprVal::FunctionCall(FunctionCall { ref name, .. }) => name,
@@ -174,7 +178,7 @@ impl<'a> Processor<'a> {
         let for_loop_body = &for_loop.body;
         let for_loop_empty_body = &for_loop.empty_body;
 
-        let container_val = self.safe_eval_expression(&for_loop.container)?;
+        let container_val = self.safe_eval_expression(&for_loop.container, write)?;
 
         let for_loop = match *container_val {
             Value::Array(_) => {
@@ -245,9 +249,9 @@ impl<'a> Processor<'a> {
         }
     }
 
-    fn render_if_node(&mut self, if_node: &'a If, write: &mut impl Write) -> Result<()> {
+    fn render_if_node(&mut self, if_node: &'a If, write: &mut String) -> Result<()> {
         for (_, expr, body) in &if_node.conditions {
-            if self.eval_as_bool(expr)? {
+            if self.eval_as_bool(expr, write)? {
                 return self.render_body(body, write);
             }
         }
@@ -266,7 +270,7 @@ impl<'a> Processor<'a> {
         &mut self,
         block: &'a Block,
         level: usize,
-        write: &mut impl Write,
+        write: &mut String,
     ) -> Result<()> {
         let level_template = match level {
             0 => self.call_stack.active_template(),
@@ -294,17 +298,17 @@ impl<'a> Processor<'a> {
         self.render_body(&block.body, write)
     }
 
-    fn get_default_value(&mut self, expr: &'a Expr) -> Result<Val<'a>> {
+    fn get_default_value(&mut self, expr: &'a Expr, s: &String) -> Result<Val<'a>> {
         if let Some(default_expr) = expr.filters[0].args.get("value") {
-            self.eval_expression(default_expr)
+            self.eval_expression(default_expr, s)
         } else {
             Err(Error::msg("The `default` filter requires a `value` argument."))
         }
     }
 
-    fn eval_in_condition(&mut self, in_cond: &'a In) -> Result<bool> {
-        let lhs = self.safe_eval_expression(&in_cond.lhs)?;
-        let rhs = self.safe_eval_expression(&in_cond.rhs)?;
+    fn eval_in_condition(&mut self, in_cond: &'a In, s: &String) -> Result<bool> {
+        let lhs = self.safe_eval_expression(&in_cond.lhs, s)?;
+        let rhs = self.safe_eval_expression(&in_cond.rhs, s)?;
 
         let present = match *rhs {
             Value::Array(ref v) => v.contains(&lhs),
@@ -336,18 +340,18 @@ impl<'a> Processor<'a> {
         Ok(if in_cond.negated { !present } else { present })
     }
 
-    fn eval_expression(&mut self, expr: &'a Expr) -> Result<Val<'a>> {
+    fn eval_expression(&mut self, expr: &'a Expr, write: &String) -> Result<Val<'a>> {
         let mut needs_escape = false;
 
         let mut res = match expr.val {
             ExprVal::Array(ref arr) => {
                 let mut values = vec![];
                 for v in arr {
-                    values.push(self.eval_expression(v)?.into_owned());
+                    values.push(self.eval_expression(v, write)?.into_owned());
                 }
                 Cow::Owned(Value::Array(values))
             }
-            ExprVal::In(ref in_cond) => Cow::Owned(Value::Bool(self.eval_in_condition(in_cond)?)),
+            ExprVal::In(ref in_cond) => Cow::Owned(Value::Bool(self.eval_in_condition(in_cond, write)?)),
             ExprVal::String(ref val) => {
                 needs_escape = true;
                 Cow::Owned(Value::String(val.to_string()))
@@ -359,7 +363,7 @@ impl<'a> Processor<'a> {
                         ExprVal::String(ref v) => res.push_str(v),
                         ExprVal::Int(ref v) => res.push_str(&format!("{}", v)),
                         ExprVal::Float(ref v) => res.push_str(&format!("{}", v)),
-                        ExprVal::Ident(ref i) => match *self.lookup_ident(i)? {
+                        ExprVal::Ident(ref i) => match *self.lookup_ident(i, write)? {
                             Value::String(ref v) => res.push_str(v),
                             Value::Number(ref v) => res.push_str(&v.to_string()),
                             _ => return Err(Error::msg(format!(
@@ -367,7 +371,7 @@ impl<'a> Processor<'a> {
                                 i
                             ))),
                         },
-                        ExprVal::FunctionCall(ref fn_call) => match *self.eval_tera_fn_call(fn_call, &mut needs_escape)? {
+                        ExprVal::FunctionCall(ref fn_call) => match *self.eval_tera_fn_call(fn_call, &mut needs_escape, write)? {
                             Value::String(ref v) => res.push_str(v),
                             Value::Number(ref v) => res.push_str(&v.to_string()),
                             _ => return Err(Error::msg(format!(
@@ -388,17 +392,17 @@ impl<'a> Processor<'a> {
                 needs_escape = ident != MAGICAL_DUMP_VAR;
                 // Negated idents are special cased as `not undefined_ident` should not
                 // error but instead be falsy values
-                match self.lookup_ident(ident) {
+                match self.lookup_ident(ident, write) {
                     Ok(val) => {
                         if val.is_null() && expr.has_default_filter() {
-                            self.get_default_value(expr)?
+                            self.get_default_value(expr, write)?
                         } else {
                             val
                         }
                     }
                     Err(e) => {
                         if expr.has_default_filter() {
-                            self.get_default_value(expr)?
+                            self.get_default_value(expr, write)?
                         } else {
                             if !expr.negated {
                                 return Err(e);
@@ -410,7 +414,7 @@ impl<'a> Processor<'a> {
                 }
             }
             ExprVal::FunctionCall(ref fn_call) => {
-                self.eval_tera_fn_call(fn_call, &mut needs_escape)?
+                self.eval_tera_fn_call(fn_call, &mut needs_escape, write)?
             }
             ExprVal::MacroCall(ref macro_call) => {
                 let val = render_to_string(
@@ -419,9 +423,9 @@ impl<'a> Processor<'a> {
                 )?;
                 Cow::Owned(Value::String(val))
             }
-            ExprVal::Test(ref test) => Cow::Owned(Value::Bool(self.eval_test(test)?)),
-            ExprVal::Logic(_) => Cow::Owned(Value::Bool(self.eval_as_bool(expr)?)),
-            ExprVal::Math(_) => match self.eval_as_number(&expr.val) {
+            ExprVal::Test(ref test) => Cow::Owned(Value::Bool(self.eval_test(test, write)?)),
+            ExprVal::Logic(_) => Cow::Owned(Value::Bool(self.eval_as_bool(expr, write)?)),
+            ExprVal::Math(_) => match self.eval_as_number(&expr.val, write) {
                 Ok(Some(n)) => Cow::Owned(Value::Number(n)),
                 Ok(None) => Cow::Owned(Value::String("NaN".to_owned())),
                 Err(e) => return Err(Error::msg(e)),
@@ -432,7 +436,7 @@ impl<'a> Processor<'a> {
             if filter.name == "safe" || filter.name == "default" {
                 continue;
             }
-            res = self.eval_filter(&res, filter, &mut needs_escape)?;
+            res = self.eval_filter(&res, filter, &mut needs_escape, write)?;
         }
 
         // Lastly, we need to check if the expression is negated, thus turning it into a bool
@@ -451,32 +455,32 @@ impl<'a> Processor<'a> {
     }
 
     /// Render an expression and never escape its result
-    fn safe_eval_expression(&mut self, expr: &'a Expr) -> Result<Val<'a>> {
+    fn safe_eval_expression(&mut self, expr: &'a Expr, s: &String) -> Result<Val<'a>> {
         let should_escape = self.should_escape;
         self.should_escape = false;
-        let res = self.eval_expression(expr);
+        let res = self.eval_expression(expr, s);
         self.should_escape = should_escape;
         res
     }
 
     /// Evaluate a set tag and add the value to the right context
-    fn eval_set(&mut self, set: &'a Set) -> Result<()> {
-        let assigned_value = self.safe_eval_expression(&set.value)?;
+    fn eval_set(&mut self, set: &'a Set, s: &String) -> Result<()> {
+        let assigned_value = self.safe_eval_expression(&set.value, s)?;
         self.call_stack.add_assignment(&set.key[..], set.global, assigned_value);
         Ok(())
     }
 
-    fn eval_test(&mut self, test: &'a Test) -> Result<bool> {
+    fn eval_test(&mut self, test: &'a Test, s: &String) -> Result<bool> {
         let tester_fn = self.tera.get_tester(&test.name)?;
         let err_wrap = |e| Error::call_test(&test.name, e);
 
         let mut tester_args = vec![];
         for arg in &test.args {
             tester_args
-                .push(self.safe_eval_expression(arg).map_err(err_wrap)?.clone().into_owned());
+                .push(self.safe_eval_expression(arg, s).map_err(err_wrap)?.clone().into_owned());
         }
 
-        let found = self.lookup_ident(&test.ident).map(|found| found.clone().into_owned()).ok();
+        let found = self.lookup_ident(&test.ident, s).map(|found| found.clone().into_owned()).ok();
 
         let result = tester_fn.test(found.as_ref(), &tester_args).map_err(err_wrap)?;
         if test.negated {
@@ -490,6 +494,7 @@ impl<'a> Processor<'a> {
         &mut self,
         function_call: &'a FunctionCall,
         needs_escape: &mut bool,
+        s: &String
     ) -> Result<Val<'a>> {
         let tera_fn = self.tera.get_function(&function_call.name)?;
         *needs_escape = !tera_fn.is_safe();
@@ -500,14 +505,14 @@ impl<'a> Processor<'a> {
         for (arg_name, expr) in &function_call.args {
             args.insert(
                 arg_name.to_string(),
-                self.safe_eval_expression(expr).map_err(err_wrap)?.clone().into_owned(),
+                self.safe_eval_expression(expr, s).map_err(err_wrap)?.clone().into_owned(),
             );
         }
 
         Ok(Cow::Owned(tera_fn.call(&args).map_err(err_wrap)?))
     }
 
-    fn eval_macro_call(&mut self, macro_call: &'a MacroCall, write: &mut impl Write) -> Result<()> {
+    fn eval_macro_call(&mut self, macro_call: &'a MacroCall, write: &mut String) -> Result<()> {
         let active_template_name = if let Some(block) = self.blocks.last() {
             block.1
         } else if self.template.name != self.template_root.name {
@@ -527,9 +532,9 @@ impl<'a> Processor<'a> {
         // First the default arguments
         for (arg_name, default_value) in &macro_definition.args {
             let value = match macro_call.args.get(arg_name) {
-                Some(val) => self.safe_eval_expression(val)?,
+                Some(val) => self.safe_eval_expression(val, write)?,
                 None => match *default_value {
-                    Some(ref val) => self.safe_eval_expression(val)?,
+                    Some(ref val) => self.safe_eval_expression(val, write)?,
                     None => {
                         return Err(Error::msg(format!(
                             "Macro `{}` is missing the argument `{}`",
@@ -560,6 +565,7 @@ impl<'a> Processor<'a> {
         value: &Val<'a>,
         fn_call: &'a FunctionCall,
         needs_escape: &mut bool,
+        s: &String
     ) -> Result<Val<'a>> {
         let filter_fn = self.tera.get_filter(&fn_call.name)?;
         *needs_escape = !filter_fn.is_safe();
@@ -570,25 +576,25 @@ impl<'a> Processor<'a> {
         for (arg_name, expr) in &fn_call.args {
             args.insert(
                 arg_name.to_string(),
-                self.safe_eval_expression(expr).map_err(err_wrap)?.clone().into_owned(),
+                self.safe_eval_expression(expr, s).map_err(err_wrap)?.clone().into_owned(),
             );
         }
 
         Ok(Cow::Owned(filter_fn.filter(value, &args).map_err(err_wrap)?))
     }
 
-    fn eval_as_bool(&mut self, bool_expr: &'a Expr) -> Result<bool> {
+    fn eval_as_bool(&mut self, bool_expr: &'a Expr, s: &String) -> Result<bool> {
         let res = match bool_expr.val {
             ExprVal::Logic(LogicExpr { ref lhs, ref rhs, ref operator }) => {
                 match *operator {
-                    LogicOperator::Or => self.eval_as_bool(lhs)? || self.eval_as_bool(rhs)?,
-                    LogicOperator::And => self.eval_as_bool(lhs)? && self.eval_as_bool(rhs)?,
+                    LogicOperator::Or => self.eval_as_bool(lhs, s)? || self.eval_as_bool(rhs, s)?,
+                    LogicOperator::And => self.eval_as_bool(lhs, s)? && self.eval_as_bool(rhs, s)?,
                     LogicOperator::Gt
                     | LogicOperator::Gte
                     | LogicOperator::Lt
                     | LogicOperator::Lte => {
-                        let l = self.eval_expr_as_number(lhs)?;
-                        let r = self.eval_expr_as_number(rhs)?;
+                        let l = self.eval_expr_as_number(lhs, s)?;
+                        let r = self.eval_expr_as_number(rhs, s)?;
                         let (ll, rr) = match (l, r) {
                             (Some(nl), Some(nr)) => (nl, nr),
                             _ => return Err(Error::msg("Comparison to NaN")),
@@ -603,8 +609,8 @@ impl<'a> Processor<'a> {
                         }
                     }
                     LogicOperator::Eq | LogicOperator::NotEq => {
-                        let mut lhs_val = self.eval_expression(lhs)?;
-                        let mut rhs_val = self.eval_expression(rhs)?;
+                        let mut lhs_val = self.eval_expression(lhs, s)?;
+                        let mut rhs_val = self.eval_expression(rhs, s)?;
 
                         // Monomorphize number vals.
                         if lhs_val.is_number() || rhs_val.is_number() {
@@ -631,7 +637,7 @@ impl<'a> Processor<'a> {
             }
             ExprVal::Ident(_) => {
                 let mut res = self
-                    .eval_expression(bool_expr)
+                    .eval_expression(bool_expr, s)
                     .unwrap_or(Cow::Owned(Value::Bool(false)))
                     .is_truthy();
                 if bool_expr.negated {
@@ -640,17 +646,17 @@ impl<'a> Processor<'a> {
                 res
             }
             ExprVal::Math(_) | ExprVal::Int(_) | ExprVal::Float(_) => {
-                match self.eval_as_number(&bool_expr.val)? {
+                match self.eval_as_number(&bool_expr.val, s)? {
                     Some(n) => n.as_f64().unwrap() != 0.0,
                     None => false,
                 }
             }
-            ExprVal::In(ref in_cond) => self.eval_in_condition(in_cond)?,
-            ExprVal::Test(ref test) => self.eval_test(test)?,
+            ExprVal::In(ref in_cond) => self.eval_in_condition(in_cond, s)?,
+            ExprVal::Test(ref test) => self.eval_test(test, s)?,
             ExprVal::Bool(val) => val,
             ExprVal::String(ref string) => !string.is_empty(),
             ExprVal::FunctionCall(ref fn_call) => {
-                let v = self.eval_tera_fn_call(fn_call, &mut false)?;
+                let v = self.eval_tera_fn_call(fn_call, &mut false, s)?;
                 match v.as_bool() {
                     Some(val) => val,
                     None => {
@@ -662,11 +668,11 @@ impl<'a> Processor<'a> {
                 }
             }
             ExprVal::StringConcat(_) => {
-                let res = self.eval_expression(bool_expr)?;
+                let res = self.eval_expression(bool_expr, s)?;
                 !res.as_str().unwrap().is_empty()
             }
             ExprVal::MacroCall(ref macro_call) => {
-                let mut buf = Vec::new();
+                let mut buf = String::new();
                 self.eval_macro_call(macro_call, &mut buf)?;
                 !buf.is_empty()
             }
@@ -682,24 +688,24 @@ impl<'a> Processor<'a> {
 
     /// In some cases, we will have filters in lhs/rhs of a math expression
     /// `eval_as_number` only works on ExprVal rather than Expr
-    fn eval_expr_as_number(&mut self, expr: &'a Expr) -> Result<Option<Number>> {
+    fn eval_expr_as_number(&mut self, expr: &'a Expr, s: &String) -> Result<Option<Number>> {
         if !expr.filters.is_empty() {
-            match *self.eval_expression(expr)? {
+            match *self.eval_expression(expr, s)? {
                 Value::Number(ref s) => Ok(Some(s.clone())),
                 _ => {
                     Err(Error::msg("Tried to do math with an expression not resulting in a number"))
                 }
             }
         } else {
-            self.eval_as_number(&expr.val)
+            self.eval_as_number(&expr.val, s)
         }
     }
 
     /// Return the value of an expression as a number
-    fn eval_as_number(&mut self, expr: &'a ExprVal) -> Result<Option<Number>> {
+    fn eval_as_number(&mut self, expr: &'a ExprVal, s: &String) -> Result<Option<Number>> {
         let result = match *expr {
             ExprVal::Ident(ref ident) => {
-                let v = &*self.lookup_ident(ident)?;
+                let v = &*self.lookup_ident(ident, s)?;
                 if v.is_i64() {
                     Some(Number::from(v.as_i64().unwrap()))
                 } else if v.is_u64() {
@@ -716,7 +722,7 @@ impl<'a> Processor<'a> {
             ExprVal::Int(val) => Some(Number::from(val)),
             ExprVal::Float(val) => Some(Number::from_f64(val).unwrap()),
             ExprVal::Math(MathExpr { ref lhs, ref rhs, ref operator }) => {
-                let (l, r) = match (self.eval_expr_as_number(lhs)?, self.eval_expr_as_number(rhs)?)
+                let (l, r) = match (self.eval_expr_as_number(lhs, s)?, self.eval_expr_as_number(rhs, s)?)
                 {
                     (Some(l), Some(r)) => (l, r),
                     _ => return Ok(None),
@@ -865,7 +871,7 @@ impl<'a> Processor<'a> {
                 }
             }
             ExprVal::FunctionCall(ref fn_call) => {
-                let v = self.eval_tera_fn_call(fn_call, &mut false)?;
+                let v = self.eval_tera_fn_call(fn_call, &mut false, s)?;
                 if v.is_i64() {
                     Some(Number::from(v.as_i64().unwrap()))
                 } else if v.is_u64() {
@@ -903,7 +909,7 @@ impl<'a> Processor<'a> {
     /// Only called while rendering a block.
     /// This will look up the block we are currently rendering and its level and try to render
     /// the block at level + n, where would be the next template in the hierarchy the block is present
-    fn do_super(&mut self, write: &mut impl Write) -> Result<()> {
+    fn do_super(&mut self, write: &mut String) -> Result<()> {
         let &(block_name, _, level) = self.blocks.last().unwrap();
         let mut next_level = level + 1;
 
@@ -936,7 +942,7 @@ impl<'a> Processor<'a> {
     }
 
     /// Looks up identifier and returns its value
-    fn lookup_ident(&self, key: &str) -> Result<Val<'a>> {
+    fn lookup_ident(&self, key: &str, s: &String) -> Result<Val<'a>> {
         // Magical variable that just dumps the context
         if key == MAGICAL_DUMP_VAR {
             // Unwraps are safe since we are dealing with things that are already Value
@@ -948,18 +954,25 @@ impl<'a> Processor<'a> {
             ));
         }
 
+        if key == MAGICAL_CONTENT_VAR
+        {
+            let val = to_value(s.clone()).unwrap();
+            return Ok(Cow::Owned(val));
+        }
+
         process_path(key, &self.call_stack)
     }
 
     /// Process the given node, appending the string result to the buffer
     /// if it is possible
-    fn render_node(&mut self, node: &'a Node, write: &mut impl Write) -> Result<()> {
+    fn render_node(&mut self, node: &'a Node, write: &mut String) -> Result<()> {
         match *node {
             // Comments are ignored when rendering
+            
             Node::Comment(_, _) => (),
-            Node::Text(ref s) | Node::Raw(_, ref s, _) => write!(write, "{}", s)?,
-            Node::VariableBlock(_, ref expr) => self.eval_expression(expr)?.render(write)?,
-            Node::Set(_, ref set) => self.eval_set(set)?,
+            Node::Text(ref s) | Node::Raw(_, ref s, _) => write.push_str(s),
+            Node::VariableBlock(_, ref expr) => self.eval_expression(expr, write)?.render(write)?,
+            Node::Set(_, ref set) => self.eval_set(set, write)?,
             Node::FilterSection(_, FilterSection { ref filter, ref body }, _) => {
                 let body = render_to_string(
                     || format!("filter {}", filter.name),
@@ -967,9 +980,9 @@ impl<'a> Processor<'a> {
                 )?;
                 // the safe filter doesn't actually exist
                 if filter.name == "safe" {
-                    write!(write, "{}", body)?;
+                    write.push_str(&body);
                 } else {
-                    self.eval_filter(&Cow::Owned(Value::String(body)), filter, &mut false)?
+                    self.eval_filter(&Cow::Owned(Value::String(body)), filter, &mut false, write)?
                         .render(write)?;
                 }
             }
@@ -1055,7 +1068,7 @@ impl<'a> Processor<'a> {
     }
 
     /// Entry point for the rendering
-    pub fn render(&mut self, write: &mut impl Write) -> Result<()> {
+    pub fn render(&mut self, write: &mut String) -> Result<()> {
         for node in &self.template_root.ast {
             self.render_node(node, write)
                 .map_err(|e| Error::chain(self.get_error_location(), e))?;
