@@ -628,6 +628,17 @@ impl Tera {
         self.filters.insert(name.to_string(), Arc::new(filter));
     }
 
+    /// Register a filter with Tera.
+    ///
+    /// If a filter with that name already exists, it will be overwritten
+    ///
+    /// ```no_compile
+    /// tera.register_filter("upper", string::upper);
+    /// ```
+    pub fn register_filter_dyn(&mut self, name: &str, filter: Arc<dyn Filter + 'static>) {
+        self.filters.insert(name.to_string(), filter);
+    }
+
     #[doc(hidden)]
     #[inline]
     pub fn get_tester(&self, tester_name: &str) -> Result<&dyn Test> {
@@ -648,6 +659,19 @@ impl Tera {
         self.testers.insert(name.to_string(), Arc::new(tester));
     }
 
+    /// Register a tester with Tera.
+    ///
+    /// If a tester with that name already exists, it will be overwritten
+    /// Dynamic version
+    ///
+    /// ```no_compile
+    /// tera.register_tester("odd", Arc::new(testers::odd));
+    /// ```
+    pub fn register_tester_dyn(&mut self, name: &str, tester: Arc<dyn Test + 'static>) {
+        self.testers.insert(name.to_string(), tester);
+    }
+
+
     #[doc(hidden)]
     #[inline]
     pub fn get_function(&self, fn_name: &str) -> Result<&dyn Function> {
@@ -667,6 +691,19 @@ impl Tera {
     /// ```
     pub fn register_function<F: Function + 'static>(&mut self, name: &str, function: F) {
         self.functions.insert(name.to_string(), Arc::new(function));
+    }
+
+    /// Register a function with Tera.
+    ///
+    /// This registers an arbitrary function to make it callable from within a template. If a
+    /// function with that name already exists, it will be overwritten.
+    /// Dynamic version
+    ///
+    /// ```no_compile
+    /// tera.register_function_dyn("range", Arc::new(range));
+    /// ```
+    pub fn register_function_dyn(&mut self, name: &str, function: Arc<dyn Function + 'static>) {
+        self.functions.insert(name.to_string(), function);
     }
 
     fn register_tera_filters(&mut self) {
