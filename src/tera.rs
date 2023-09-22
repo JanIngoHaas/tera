@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
@@ -65,6 +65,8 @@ pub struct Tera {
     #[doc(hidden)]
     pub templates: HashMap<String, Template>,
     #[doc(hidden)]
+    pub templates_strs: BTreeMap<String, String>,
+    #[doc(hidden)]
     pub filters: HashMap<String, Arc<dyn Filter>>,
     #[doc(hidden)]
     pub testers: HashMap<String, Arc<dyn Test>>,
@@ -93,6 +95,7 @@ impl Tera {
             filters: HashMap::new(),
             functions: HashMap::new(),
             testers: HashMap::new(),
+            templates_strs: BTreeMap::new(),
             autoescape_suffixes: vec![".html", ".htm", ".xml"],
             escape_fn: escape_html,
         };
@@ -245,7 +248,15 @@ impl Tera {
         f.read_to_string(&mut input)
             .map_err(|e| Error::chain(format!("Failed to read template '{:?}'", path), e))?;
 
-        let tpl = Template::new(tpl_name, Some(path.to_str().unwrap().to_string()), &input)
+
+        let (name, templ_src) = (tpl_name, Some(path.to_str().unwrap().to_string()));
+
+        if templ_src.is_some()
+        {
+            self.templates_strs.insert(name.to_string(), templ_src.clone().unwrap());
+        }
+
+        let tpl = Template::new(name, templ_src, &input)
             .map_err(|e| Error::chain(format!("Failed to parse {:?}", path), e))?;
 
         self.templates.insert(tpl_name.to_string(), tpl);
@@ -934,6 +945,7 @@ impl Default for Tera {
             filters: HashMap::new(),
             testers: HashMap::new(),
             functions: HashMap::new(),
+            templates_strs: BTreeMap::new(),
             autoescape_suffixes: vec![".html", ".htm", ".xml"],
             escape_fn: escape_html,
         };
