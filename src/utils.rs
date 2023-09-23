@@ -74,7 +74,14 @@ mod tests {
 
     #[test]
     fn test_render_to_string() {
-        let string = render_to_string(|| panic!(), |w| {w.push_str("test"); Ok::<(),Error>(())}).unwrap();
+        let string = render_to_string(
+            || panic!(),
+            |w| {
+                w.push_str("test");
+                Ok::<(), Error>(())
+            },
+        )
+        .unwrap();
         assert_eq!(string, "test".to_owned());
     }
 }

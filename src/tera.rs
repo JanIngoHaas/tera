@@ -1,4 +1,4 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
@@ -248,11 +248,9 @@ impl Tera {
         f.read_to_string(&mut input)
             .map_err(|e| Error::chain(format!("Failed to read template '{:?}'", path), e))?;
 
-
         let (name, templ_src) = (tpl_name, Some(path.to_str().unwrap().to_string()));
 
-        if templ_src.is_some()
-        {
+        if templ_src.is_some() {
             self.templates_strs.insert(name.to_string(), templ_src.clone().unwrap());
         }
 
@@ -681,7 +679,6 @@ impl Tera {
     pub fn register_tester_dyn(&mut self, name: &str, tester: Arc<dyn Test + 'static>) {
         self.testers.insert(name.to_string(), tester);
     }
-
 
     #[doc(hidden)]
     #[inline]

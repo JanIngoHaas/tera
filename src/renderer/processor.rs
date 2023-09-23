@@ -262,12 +262,7 @@ impl<'a> Processor<'a> {
     /// The way inheritance work is that the top parent will be rendered by the renderer so for blocks
     /// we want to look from the bottom (`level = 0`, the template the user is actually rendering)
     /// to the top (the base template).
-    fn render_block(
-        &mut self,
-        block: &'a Block,
-        level: usize,
-        write: &mut String,
-    ) -> Result<()> {
+    fn render_block(&mut self, block: &'a Block, level: usize, write: &mut String) -> Result<()> {
         let level_template = match level {
             0 => self.call_stack.active_template(),
             _ => self
@@ -347,7 +342,9 @@ impl<'a> Processor<'a> {
                 }
                 Cow::Owned(Value::Array(values))
             }
-            ExprVal::In(ref in_cond) => Cow::Owned(Value::Bool(self.eval_in_condition(in_cond, write)?)),
+            ExprVal::In(ref in_cond) => {
+                Cow::Owned(Value::Bool(self.eval_in_condition(in_cond, write)?))
+            }
             ExprVal::String(ref val) => {
                 needs_escape = true;
                 Cow::Owned(Value::String(val.to_string()))
@@ -490,7 +487,7 @@ impl<'a> Processor<'a> {
         &mut self,
         function_call: &'a FunctionCall,
         needs_escape: &mut bool,
-        s: &String
+        s: &String,
     ) -> Result<Val<'a>> {
         let tera_fn = self.tera.get_function(&function_call.name)?;
         *needs_escape = !tera_fn.is_safe();
@@ -561,7 +558,7 @@ impl<'a> Processor<'a> {
         value: &Val<'a>,
         fn_call: &'a FunctionCall,
         needs_escape: &mut bool,
-        s: &String
+        s: &String,
     ) -> Result<Val<'a>> {
         let filter_fn = self.tera.get_filter(&fn_call.name)?;
         *needs_escape = !filter_fn.is_safe();
@@ -584,7 +581,9 @@ impl<'a> Processor<'a> {
             ExprVal::Logic(LogicExpr { ref lhs, ref rhs, ref operator }) => {
                 match *operator {
                     LogicOperator::Or => self.eval_as_bool(lhs, s)? || self.eval_as_bool(rhs, s)?,
-                    LogicOperator::And => self.eval_as_bool(lhs, s)? && self.eval_as_bool(rhs, s)?,
+                    LogicOperator::And => {
+                        self.eval_as_bool(lhs, s)? && self.eval_as_bool(rhs, s)?
+                    }
                     LogicOperator::Gt
                     | LogicOperator::Gte
                     | LogicOperator::Lt
@@ -718,11 +717,11 @@ impl<'a> Processor<'a> {
             ExprVal::Int(val) => Some(Number::from(val)),
             ExprVal::Float(val) => Some(Number::from_f64(val).unwrap()),
             ExprVal::Math(MathExpr { ref lhs, ref rhs, ref operator }) => {
-                let (l, r) = match (self.eval_expr_as_number(lhs, s)?, self.eval_expr_as_number(rhs, s)?)
-                {
-                    (Some(l), Some(r)) => (l, r),
-                    _ => return Ok(None),
-                };
+                let (l, r) =
+                    match (self.eval_expr_as_number(lhs, s)?, self.eval_expr_as_number(rhs, s)?) {
+                        (Some(l), Some(r)) => (l, r),
+                        _ => return Ok(None),
+                    };
 
                 match *operator {
                     MathOperator::Mul => {
@@ -950,8 +949,7 @@ impl<'a> Processor<'a> {
             ));
         }
 
-        if key == MAGICAL_CONTENT_VAR
-        {
+        if key == MAGICAL_CONTENT_VAR {
             let val = to_value(s.clone()).unwrap();
             return Ok(Cow::Owned(val));
         }
@@ -964,7 +962,6 @@ impl<'a> Processor<'a> {
     fn render_node(&mut self, node: &'a Node, write: &mut String) -> Result<()> {
         match *node {
             // Comments are ignored when rendering
-            
             Node::Comment(_, _) => (),
             Node::Text(ref s) | Node::Raw(_, ref s, _) => write.push_str(s),
             Node::VariableBlock(_, ref expr) => self.eval_expression(expr, write)?.render(write)?,

@@ -61,7 +61,7 @@ fn render_variable_block_lit_expr() {
         ("{{ true and not 10 }}", "false"),
         ("{{ not true }}", "false"),
         ("{{ [1, 2, 3] }}", "[1, 2, 3]"),
-        ("{{1 + 3}}hey{{_content_}}", "4hey4hey")
+        ("{{1 + 3}}hey{{_content_}}", "4hey4hey"),
     ];
 
     for (input, expected) in inputs {
