@@ -1,5 +1,6 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
+use std::borrow::{Cow, BorrowMut};
+use std::collections::{HashMap, BTreeMap};
+use std::sync::Arc;
 
 use serde_json::{to_string_pretty, to_value, Number, Value};
 
@@ -12,7 +13,7 @@ use crate::renderer::macros::MacroCollection;
 use crate::renderer::square_brackets::pull_out_square_bracket;
 use crate::renderer::stack_frame::{FrameContext, FrameType, Val};
 use crate::template::Template;
-use crate::tera::Tera;
+use crate::tera::{Tera, AttachedFunctions};
 use crate::utils::render_to_string;
 use crate::Context;
 
@@ -116,6 +117,7 @@ pub struct Processor<'a> {
     /// definitions and for which block
     /// Vec<(block name, tpl_name, level)>
     blocks: Vec<(&'a str, &'a str, usize)>,
+    attached: &'a AttachedFunctions
 }
 
 impl<'a> Processor<'a> {
@@ -125,6 +127,7 @@ impl<'a> Processor<'a> {
         tera: &'a Tera,
         context: &'a Context,
         should_escape: bool,
+        attached: &'a AttachedFunctions,
     ) -> Self {
         // Gets the root template if we are rendering something with inheritance or just return
         // the template we're dealing with otherwise
@@ -144,6 +147,7 @@ impl<'a> Processor<'a> {
             macros: MacroCollection::from_original_template(template, tera),
             should_escape,
             blocks: Vec::new(),
+            attached
         }
     }
 
@@ -489,7 +493,9 @@ impl<'a> Processor<'a> {
         needs_escape: &mut bool,
         s: &String,
     ) -> Result<Val<'a>> {
-        let tera_fn = self.tera.get_function(&function_call.name)?;
+        let tera_fn = self.attached.functions.get::<str>(function_call.name.as_ref())
+            .map_or_else(|| self.attached.awaiters.get::<str>(function_call.name.as_ref()).map(|x|x.as_ref()), |x|Some(&**x))
+            .map_or_else(|| self.tera.get_function(&function_call.name), |x|Ok(x))?;
         *needs_escape = !tera_fn.is_safe();
 
         let err_wrap = |e| Error::call_function(&function_call.name, e);
@@ -560,7 +566,8 @@ impl<'a> Processor<'a> {
         needs_escape: &mut bool,
         s: &String,
     ) -> Result<Val<'a>> {
-        let filter_fn = self.tera.get_filter(&fn_call.name)?;
+
+        let filter_fn = self.attached.filters.get::<str>(fn_call.name.as_ref()).map_or_else(|| self.tera.get_filter(&fn_call.name), |x|Ok(&**x))?;
         *needs_escape = !filter_fn.is_safe();
 
         let err_wrap = |e| Error::call_filter(&fn_call.name, e);

@@ -8,11 +8,15 @@ mod macros;
 mod processor;
 mod stack_frame;
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use self::processor::Processor;
 use crate::errors::Result;
 use crate::template::Template;
-use crate::tera::Tera;
-use crate::Context;
+use crate::tera::{Tera, AttachedFunctions};
+use crate::{Context, Filter, Function};
 
 /// Given a `Tera` and reference to `Template` and a `Context`, renders text
 #[derive(Debug)]
@@ -51,9 +55,20 @@ impl<'a> Renderer<'a> {
 
     /// Combines the context with the Template to write the end result to output
     pub fn render_to(&self, mut output: &mut String) -> Result<()> {
+        let attached = AttachedFunctions::new();
         let mut processor =
-            Processor::new(self.template, self.tera, self.context, self.should_escape);
+            Processor::new(self.template, self.tera, self.context, self.should_escape, &attached);
 
         processor.render(&mut output)
     }
+
+    pub fn render_with_attached(&self, attached: AttachedFunctions) -> Result<String>
+    {
+        let mut processor =
+            Processor::new(self.template, self.tera, self.context, self.should_escape, &attached);
+        let mut output = String::new();
+        processor.render(&mut output)?;
+        Ok(output)
+    }
+
 }

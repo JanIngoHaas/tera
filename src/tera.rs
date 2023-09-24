@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs::File;
@@ -21,6 +22,26 @@ const ONE_OFF_TEMPLATE_NAME: &str = "__tera_one_off";
 
 /// The escape function type definition
 pub type EscapeFn = fn(&str) -> String;
+
+/// These are the collection of functions that can be attached
+pub struct AttachedFunctions
+{
+    #[doc(hidden)]
+    pub filters: Arc<BTreeMap<Cow<'static, str>, Box<dyn Filter>>>,
+    #[doc(hidden)]
+    pub functions: Arc<BTreeMap<Cow<'static, str>, Box<dyn Function>>>,
+    #[doc(hidden)]
+    pub awaiters: BTreeMap<Cow<'static, str>, Arc<dyn Function>>
+}
+
+impl AttachedFunctions
+{
+    #[doc(hidden)]
+    pub fn new() -> Self
+    {
+        AttachedFunctions { filters: Arc::new(BTreeMap::new()), functions: Arc::new(BTreeMap::new()), awaiters: BTreeMap::new() }        
+    }
+}
 
 /// Main point of interaction in this library.
 ///
@@ -63,7 +84,7 @@ pub struct Tera {
     #[doc(hidden)]
     glob: Option<String>,
     #[doc(hidden)]
-    pub templates: HashMap<String, Template>,
+    pub templates: HashMap<String, Template>, // Maybe make this a RwLock<Arc<_>> to enable quicker copying and less resource usage?
     #[doc(hidden)]
     pub templates_strs: BTreeMap<String, String>,
     #[doc(hidden)]
@@ -401,6 +422,48 @@ impl Tera {
         renderer.render()
     }
 
+    /// Renders a Tera template given a [`Context`].
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// # use tera::{Tera, Context};
+    /// // Create new tera instance with sample template
+    /// let mut tera = Tera::default();
+    /// tera.add_raw_template("info", "My age is {{ age }}.");
+    ///
+    /// // Create new context
+    /// let mut context = Context::new();
+    /// context.insert("age", &18);
+    ///
+    /// // Render template using the context
+    /// let output = tera.render("info", &context).unwrap();
+    /// assert_eq!(output, "My age is 18.");
+    /// ```
+    ///
+    /// To render a template with an empty context, simply pass an empty [`Context`] object.
+    ///
+    /// ```
+    /// # use tera::{Tera, Context, AttachedFunctions};
+    /// # use std::sync::Arc;
+    /// // Create new tera instance with demo template
+    /// let mut tera = Tera::default();
+    /// tera.add_raw_template("hello.html", "<h1>Hello</h1>");
+    ///
+    /// // Render a template with an empty context and specified functions which take precedence over previously registered functions
+    /// 
+    /// let output = tera.render_with_attached("hello.html", &Context::new(), AttachedFunctions::new()).unwrap();
+    /// assert_eq!(output, "<h1>Hello</h1>");
+    /// ```
+    pub fn render_with_attached(&self, template_name: &str, context: &Context, attached: AttachedFunctions) -> Result<String>
+    {
+        let template = self.get_template(template_name)?;
+        let renderer = Renderer::new(template, self, context);
+        renderer.render_with_attached(attached)
+    }
+
     /// Renders a Tera template given a [`Context`] to something that implements [`Write`].
     ///
     /// The only difference from [`render()`](Self::render) is that this version doesn't convert
@@ -559,6 +622,7 @@ impl Tera {
             let tpl = Template::new(name, None, content.as_ref())
                 .map_err(|e| Error::chain(format!("Failed to parse '{}'", name), e))?;
             self.templates.insert(name.to_string(), tpl);
+            self.templates_strs.insert(name.to_string(), content.as_ref().to_string());
         }
         self.build_inheritance_chains()?;
         self.check_macro_files()?;

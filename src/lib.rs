@@ -85,7 +85,7 @@ pub use crate::context::dotted_pointer;
 pub use crate::context::get_json_pointer;
 #[doc(hidden)]
 pub use crate::template::Template;
-pub use crate::tera::Tera;
+pub use crate::tera::{Tera, AttachedFunctions};
 pub use crate::utils::escape_html;
 // Re-export Value and other useful things from serde
 // so apps/tools can encode data in Tera types
